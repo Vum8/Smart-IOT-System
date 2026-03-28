@@ -1,0 +1,11 @@
+# Chặn thư mục node_modules của Backend
+**/node_modules/
+vum8_iot_sever/node_modules/
+
+# Chặn file môi trường (chứa mật khẩu, key)
+.env
+
+# Chặn các file rác của Flutter/Android (đã có trong folder app nhưng cứ thêm cho chắc)
+**/build/
+.dart_tool/
+.connectedly/

@@ -1,0 +1,29 @@
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+
+# Android
+android/local.properties
+android/.cxx/
+
+# iOS
+ios/Flutter/.last_build_id
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Misc (optional)
+*.class
+*.swp
