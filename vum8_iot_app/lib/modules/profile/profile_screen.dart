@@ -8,14 +8,14 @@ class ProfileScreen extends StatelessWidget {
 
   // =============================================================
   // CHẾ ĐỘ DEMO:
-  // true -> Mở trên Laptop | false -> Mở trên Điện thoại (Như cũ)
-  final bool isDemoOnLaptop = true;
+  // true -> Mở trên Laptop | false -> Mở trên Điện thoại
+  final bool isDemoOnLaptop = false;
   // =============================================================
 
   Future<void> _handleResourceTap(BuildContext context, String urlString) async {
     if (isDemoOnLaptop) {
       // --- CHẾ ĐỘ 1: GỌI API ĐỂ MỞ TRÊN TRÌNH DUYỆT LAPTOP ---
-      final String serverIp = "192.168.85.13"; // Kiểm tra IP Laptop của bạn
+      final String serverIp = "192.168.0.106"; // Kiểm tra IP Laptop của bạn
       final String apiUrl = "http://$serverIp:3000/api/open-link?url=$urlString";
 
       try {
@@ -46,9 +46,19 @@ class ProfileScreen extends StatelessWidget {
   }
 
   Future<void> _openOnMobile(String urlString) async {
-    final Uri url = Uri.parse(urlString);
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      debugPrint("Không thể mở: $urlString");
+    // Đánh lừa Android bằng cách ép link về chế độ mobilebasic
+    String fooledUrl = urlString.replaceAll('/edit?usp=sharing', '/mobilebasic');
+    if (fooledUrl.endsWith('/edit')) {
+      fooledUrl = fooledUrl.replaceAll('/edit', '/mobilebasic');
+    }
+
+    final Uri url = Uri.parse(fooledUrl);
+
+    if (!await launchUrl(
+      url,
+      mode: LaunchMode.inAppWebView, // Ép mở trong Webview của App
+    )) {
+      debugPrint("Không thể mở: $fooledUrl");
     }
   }
 
@@ -105,9 +115,9 @@ class ProfileScreen extends StatelessWidget {
                 icon: Icons.description_outlined,
                 iconBg: const Color(0xFFE8F5E9),
                 iconColor: const Color(0xFF2E7D32),
-                title: 'Báo cáo PDF',
+                title: 'Báo cáo',
                 subtitle: 'Thông tin về sản phẩm',
-                onTap: () => _handleResourceTap(context, 'https://vum8.com/report.pdf'),
+                onTap: () => _handleResourceTap(context, 'https://docs.google.com/document/d/1TGeW-WN30sL6VfauReka9ENQ-9xvvoEp9u7XDJ9Mrjc/edit?usp=sharing'),
               ),
               _buildResourceCard(
                 icon: Icons.menu_book_rounded,
@@ -123,7 +133,7 @@ class ProfileScreen extends StatelessWidget {
                 iconColor: AppColors.textMain,
                 title: 'Kho lưu trữ GitHub',
                 subtitle: 'Khám phá mã nguồn',
-                onTap: () => _handleResourceTap(context, 'https://github.com/Vum8/IOT.git'),
+                onTap: () => _handleResourceTap(context, 'https://github.com/Vum8/Smart-IOT-System.git'),
               ),
               _buildResourceCard(
                 icon: Icons.blur_on_rounded,
@@ -131,7 +141,7 @@ class ProfileScreen extends StatelessWidget {
                 iconColor: AppColors.primary,
                 title: 'Thiết kế Figma',
                 subtitle: 'Xem UI & UX',
-                onTap: () => _handleResourceTap(context, 'https://figma.com'),
+                onTap: () => _handleResourceTap(context, 'https://www.figma.com/design/8Zr5EbOf2qagF5iylEgO5n/IOT?node-id=0-1&t=kYWNTP9SLmD0bfWr-1'),
               ),
               const SizedBox(height: 40),
             ],
