@@ -85,6 +85,7 @@ void reconnect() {
       client.subscribe("cmd/temp");
       client.subscribe("cmd/humid");
       client.subscribe("cmd/request_update");
+      client.publish("cmd/request_sync", "1");
       sendCurrentStatus();
     } else {
       Serial.print("failed, rc=");
@@ -102,9 +103,9 @@ void setup() {
   pinMode(ledBlink, OUTPUT);
   pinMode(lightSensorPin, INPUT);
 
-  digitalWrite(ledLight, LOW);
-  digitalWrite(ledFan, LOW);
-  digitalWrite(ledHumid, LOW);
+  // digitalWrite(ledLight, LOW); Cưỡng bức tắt đèn, bỏ đi để set trạng thái cuối khi lỗi xảy ra
+  // digitalWrite(ledFan, LOW);
+  // digitalWrite(ledHumid, LOW);
 
   dht.begin();
   setup_wifi();

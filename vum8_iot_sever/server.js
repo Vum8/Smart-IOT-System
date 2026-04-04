@@ -3,6 +3,7 @@ const mysql = require('mysql2');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const { exec } = require('child_process');
 
 const app = express();
 app.use(express.json()); 
@@ -11,10 +12,7 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
 const pendingCommands = {};
-// THÊM DÒNG NÀY: Bộ nhớ lưu trạng thái cuối cùng của các thiết bị
 const deviceStates = { light: null, fan: null, humid: null };
-// Mở trình duyệt laptop
-const { exec } = require('child_process');
 
 // --- HÀM HỖ TRỢ CHUYỂN ĐỔI TÊN THIẾT BỊ ---
 const getDeviceName = (deviceCode) => {
@@ -30,9 +28,11 @@ const db = mysql.createPool({
     user: 'root',
     password: '',
     database: 'vum8_iot',
+    port: 3307,
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0
+    queueLimit: 0,
+    timezone: '+07:00' // Đảm bảo đồng bộ múi giờ Việt Nam
 });
 
 db.getConnection((err, connection) => {
@@ -53,14 +53,15 @@ mqttClient.on('connect', () => {
     console.log('✅ Đã kết nối tới MQTT Broker Port 1308');
     mqttClient.subscribe('sensors/data');
     mqttClient.subscribe('ack/#'); 
+    mqttClient.subscribe('cmd/request_sync');
     mqttClient.publish('cmd/request_update', '1');
 });
 
-// --- 3. NHẬN DỮ LIỆU TỪ ESP32 ---
+// --- 3. NHẬN DỮ LIỆU TỪ ESP32 & LƯU SONG SONG ---
 mqttClient.on('message', (topic, message) => {
     const msgStr = message.toString();
 
-    // A. LƯU DỮ LIỆU CẢM BIẾN (Chỉ lưu vào sensor_logs)
+    // A. LƯU DỮ LIỆU CẢM BIẾN
     if (topic === 'sensors/data') {
         try {
             const data = JSON.parse(msgStr);
@@ -73,60 +74,105 @@ mqttClient.on('message', (topic, message) => {
                 time: currentTime.toLocaleTimeString()
             });
 
-            const sql = "INSERT INTO sensor_logs (temp, humid, light, created_at) VALUES (?, ?, ?, ?)";
-            db.query(sql, [data.temp, data.hum, data.light, currentTime], (err) => {
-                if(err) console.error('❌ Lỗi lưu Sensor:', err.message);
+            // 1. Ghi vào bảng cũ (Duy trì App Flutter)
+            // const sqlOld = "INSERT INTO sensor_logs (temp, humid, light, created_at) VALUES (?, ?, ?, ?)";
+            // db.query(sqlOld, [data.temp, data.hum, data.light, currentTime], (err) => {
+            //     if(err) console.error('❌ Lỗi lưu Sensor cũ:', err.message);
+            // });
+
+            // 2. Ghi vào bảng chuẩn Data_Sensors (Theo sơ đồ mới)
+            const sensorMap = { 'temp': data.temp, 'humid': data.hum, 'light': data.light };
+            Object.entries(sensorMap).forEach(([key, val]) => {
+                const sqlNew = `
+                    INSERT INTO Data_Sensors (idSS, Value, created_at) 
+                    SELECT id, ?, ? FROM DSCB WHERE sensor_key = ?`;
+                db.query(sqlNew, [val, currentTime, key], (err) => {
+                    if(err) console.error(`❌ Lỗi lưu Data_Sensors (${key}):`, err.message);
+                });
             });
+
         } catch (e) {
             console.error('❌ Lỗi định dạng JSON:', e.message);
         }
     }
     
-    // B. LƯU LỊCH SỬ HÀNH ĐỘNG (Lưu vào action_history)
+    // B. LƯU LỊCH SỬ HÀNH ĐỘNG
     if (topic.startsWith('ack/')) {
         const device = topic.split('/')[1]; 
         const status = msgStr; 
         const currentTime = new Date();
         
-        // 1. Kiểm tra sự thay đổi trạng thái
         const previousStatus = deviceStates[device];
-        deviceStates[device] = status; // Cập nhật bộ nhớ với trạng thái mới nhất
+        deviceStates[device] = status;
 
         let isUserAction = false; 
-
-        // Nếu có lệnh chờ từ người dùng
         if (pendingCommands[device]) {
             clearTimeout(pendingCommands[device]);
             delete pendingCommands[device];
             isUserAction = true; 
         }
 
-        // 2. LOGIC LƯU THÔNG MINH:
-        // - Chỉ lưu nếu Tự động thay đổi (isStateChange = true)
-        // - Lần đầu tiên server chạy (previousStatus === null) thì không lưu rác
         const isStateChange = previousStatus !== null && previousStatus !== status;
 
-        if (isUserAction || (!pendingCommands[device] && topic === 'ack/light' && isStateChange)) {
+        if (isUserAction || isStateChange) {
             const deviceName = getDeviceName(device);
             const actionText = status === 'ON' ? 'Bật' : 'Tắt';
             const statusText = 'Thành công';
+            const currentTime = new Date();
 
-            // GHI VÀO BẢNG MỚI: action_history
-            const sqlAction = "INSERT INTO action_history (device_name, action, status, created_at) VALUES (?, ?, ?, ?)";
-            db.query(sqlAction, [deviceName, actionText, statusText, currentTime], (err) => {
-                if (err) console.error('❌ Lỗi lưu SQL Action:', err.message);
-                else console.log(`💾 Ghi log Action: ${deviceName} -> ${actionText} (${statusText})`);
-            });
-        }
+            // 1. Ghi vào bảng mới Action (Lưu lịch sử hành động)
+            const sqlNewAction = `
+                INSERT INTO Action (idTb, Action, Status, created_at)
+                SELECT id, ?, ?, ? FROM tbi WHERE Ten = ?`;
+                
+            db.query(sqlNewAction, [actionText, statusText, currentTime, deviceName], (err) => {
+                if (err) {
+                    console.error('❌ Lỗi lưu Action mới:', err.message);
+                } else {
+                    console.log(`💾 Đã lưu lịch sử: ${deviceName} -> ${actionText}`);
+                    
+                    // 2. CẬP NHẬT TRẠNG THÁI HIỆN TẠI VÀO BẢNG TBI
+                    // Chúng ta chỉ UPDATE khi việc ghi log lịch sử đã thành công
+                    const sqlUpdateStatus = "UPDATE tbi SET status = ? WHERE Ten = ?";
+                    db.query(sqlUpdateStatus, [status, deviceName], (errUpdate) => {
+                        if (errUpdate) {
+                            console.error(`❌ Lỗi cập nhật status cho ${deviceName}:`, errUpdate.message);
+                        } else {
+                            console.log(`✅ Đã cập nhật trạng thái '${status}' vào bảng tbi cho: ${deviceName}`);
+                        }
+                });
+            }
+        });
+
+            // Cập nhật bộ nhớ tạm của Server để tránh ghi log lặp
+            deviceStates[device] = status;
+    }
         
         io.emit('device_status_ack', { 
             device: (device === 'fan') ? 'temp' : device, 
             status: status 
         });
     }
+    // C. XỬ LÝ YÊU CẦU ĐỒNG BỘ KHI ESP32 KHỞI ĐỘNG LẠI
+    if (topic === 'cmd/request_sync') {
+        console.log("🔄 ESP32 vừa khởi động, đang gửi lại trạng thái từ Database...");
+        
+        // Truy vấn bảng tbi để lấy trạng thái cuối cùng
+        db.query("SELECT topic, status FROM tbi", (err, results) => {
+            if (err) return console.error("❌ Lỗi lấy dữ liệu đồng bộ:", err.message);
+            
+            results.forEach(device => {
+                // Map status 'ON' -> '1', 'OFF' -> '0'
+                const payload = (device.status === 'ON' || device.status === 'Bật') ? '1' : '0';
+                // Gửi ngược lại topic điều khiển (cmd/light, cmd/temp, cmd/humid)
+                mqttClient.publish(device.topic, payload);
+                console.log(`📤 Sync: ${device.topic} -> ${payload}`);
+            });
+        });
+    }
 });
 
-// --- 4. API LẤY LỊCH SỬ HOẠT ĐỘNG (Đọc từ action_history, "đóng giả" cấu trúc cũ) ---
+// --- 4. CÁC API TRUY VẤN (Tạm thời giữ nguyên để App không lỗi) ---
 app.get('/api/history', (req, res) => {
     const { device, startTime, endTime, date, statusFilter, keyword, onlyErrors, page = 1 } = req.query;
     const limit = 10; 
@@ -137,88 +183,92 @@ app.get('/api/history', (req, res) => {
 
     // 1. Lọc theo ngày
     if (date && date !== 'null' && date !== '') {
-        conditions.push("DATE(created_at) = ?");
+        conditions.push("DATE(a.created_at) = ?");
         params.push(date);
     }
-    // 2. Lọc theo khoảng giờ
+
+    // 2. Lọc theo giờ
     if (startTime && endTime && startTime !== 'null' && endTime !== 'null') {
-        conditions.push("TIME(created_at) BETWEEN ? AND ?");
+        conditions.push("TIME(a.created_at) BETWEEN ? AND ?");
         params.push(startTime, endTime);
     }
-    // 3. Lọc theo thiết bị
+
+    // 3. Lọc theo thiết bị (Bảng tbi)
     if (device && device !== 'Tất cả') {
-        conditions.push("device_name = ?");
+        conditions.push("t.Ten = ?");
         params.push(device);
     }
-    // 4. Lọc theo trạng thái Bật/Tắt
+
+    // 4. Lọc theo trạng thái Bật/Tắt (Khớp với UI Flutter)
     if (statusFilter === 'on' || statusFilter === 'Chỉ BẬT') {
-        conditions.push("action = 'Bật'");
+        conditions.push("a.Action = 'Bật'");
     } else if (statusFilter === 'off' || statusFilter === 'Chỉ TẮT') {
-        conditions.push("action = 'Tắt'");
-    }
-    // 5. Chỉ lọc lỗi
-    if (onlyErrors === 'true') {
-        conditions.push("(LOWER(status) = 'thất bại' OR LOWER(status) = 'fail')");
+        conditions.push("a.Action = 'Tắt'");
     }
 
-    // --- 6. SEARCH LIVE (PHẦN QUAN TRỌNG NHẤT) ---
+    // 5. CHỈ LỌC LỖI (Sửa lỗi bạn vừa báo)
+    if (onlyErrors === 'true') {
+        conditions.push("(LOWER(a.Status) = 'thất bại' OR LOWER(a.Status) = 'fail')");
+    }
+
+    // 6. SEARCH LIVE ĐA NĂNG
     if (keyword && keyword.trim() !== '') {
         const k = keyword.trim().toLowerCase();
         const p = `%${k}%`;
         
-        let searchOr = [];
-        // Tìm theo Tên thiết bị và Ngày tháng (Dùng LIKE)
-        searchOr.push("LOWER(device_name) LIKE ?");
-        searchOr.push("DATE_FORMAT(created_at, '%d/%m/%Y %H:%i:%s') LIKE ?");
-        params.push(p, p);
+        let searchOr = [
+            "LOWER(t.Ten) LIKE ?",
+            "LOWER(a.Action) LIKE ?",
+            "LOWER(a.Status) LIKE ?",
+            "DATE_FORMAT(a.created_at, '%d/%m/%Y %H:%i:%s') LIKE ?"
+        ];
+        
+        // Thông dịch từ khóa nhanh cho người dùng
+        if (k.includes("bật") || k === "on") searchOr.push("a.Action = 'Bật'");
+        if (k.includes("tắt") || k === "off") searchOr.push("a.Action = 'Tắt'");
+        if (k.includes("thành công")) searchOr.push("a.Status = 'Thành công'");
+        if (k.includes("thất bại") || k === "fail") searchOr.push("a.Status = 'Thất bại'");
 
-        // Thông dịch Turn On/Off -> Ép so khớp cứng (=) để không lẫn lộn
-        if (k.includes("on") || k.includes("bật")) {
-            searchOr.push("action = 'Bật'");
-        } else if (k.includes("off") || k.includes("tắt")) {
-            searchOr.push("action = 'Tắt'");
-        }
-
-        // Thông dịch Thành công/Thất bại -> Ép so khớp cứng (=) để sạch trang cuối
-        if (k === 'thành công' || k === 'thanh cong') {
-            searchOr.push("status = 'Thành công'");
-        } else if (k === 'thất bại' || k === 'that bai') {
-            searchOr.push("status = 'Thất bại'");
-        }
-
-        // Bọc toàn bộ OR trong ngoặc và nối với chuỗi AND chính
         conditions.push(`(${searchOr.join(" OR ")})`);
+        params.push(p, p, p, p);
     }
 
     const finalWhere = conditions.join(" AND ");
 
-    // ĐẾM TỔNG SỐ
-    db.query(`SELECT COUNT(*) AS total FROM action_history WHERE ${finalWhere}`, params, (err, countRes) => {
+    // TRUY VẤN TỔNG SỐ
+    const countSql = `SELECT COUNT(*) AS total FROM Action a JOIN tbi t ON a.idTb = t.id WHERE ${finalWhere}`;
+
+    db.query(countSql, params, (err, countRes) => {
         if (err) return res.status(500).json({ error: "Lỗi Count: " + err.message });
         
         const totalRecords = countRes[0].total;
-        const totalPages = Math.ceil(totalRecords / limit) || 1; 
+        const totalPages = totalRecords > 0 ? Math.ceil(totalRecords / limit) : 1; 
 
-        // LẤY DỮ LIỆU
+        // LẤY DỮ LIỆU VÀ ÉP KIỂU CHO APP FLUTTER (id, action, status, device_name...)
         const sql = `
-            SELECT id, action, status, device_name, created_at,
-                -1 AS temp, 
-                (CASE 
-                    WHEN action = 'Bật' AND status = 'Thành công' THEN 1 
-                    WHEN action = 'Tắt' AND status = 'Thành công' THEN 0 
-                    WHEN action = 'Bật' AND status = 'Thất bại' THEN 3 
-                    WHEN action = 'Tắt' AND status = 'Thất bại' THEN 2 
-                    ELSE 4 
-                END) AS humid, 
-                (CASE 
-                    WHEN device_name = 'Đèn chiếu sáng' THEN 1 
-                    WHEN device_name = 'Quạt thông gió' THEN 2 
-                    WHEN device_name = 'Máy tạo ẩm' THEN 3 
-                    ELSE 1
-                END) AS light
-            FROM action_history 
+            SELECT a.id, 
+                   a.Action as action, 
+                   a.Status as status, 
+                   t.Ten as device_name, 
+                   a.created_at,
+                   -1 AS temp, 
+                   (CASE 
+                        WHEN a.Action = 'Bật' AND a.Status = 'Thành công' THEN 1 
+                        WHEN a.Action = 'Tắt' AND a.Status = 'Thành công' THEN 0 
+                        WHEN a.Action = 'Bật' AND a.Status = 'Thất bại' THEN 3 
+                        WHEN a.Action = 'Tắt' AND a.Status = 'Thất bại' THEN 2 
+                        ELSE 4 
+                   END) AS humid,
+                   (CASE 
+                        WHEN t.Ten = 'Đèn chiếu sáng' THEN 1 
+                        WHEN t.Ten = 'Quạt thông gió' THEN 2 
+                        WHEN t.Ten = 'Máy tạo ẩm' THEN 3 
+                        ELSE 1
+                   END) AS light
+            FROM Action a 
+            JOIN tbi t ON a.idTb = t.id 
             WHERE ${finalWhere} 
-            ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+            ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
             
         db.query(sql, [...params, limit, offset], (err, results) => {
             if (err) return res.status(500).json({ error: "Lỗi Select: " + err.message });
@@ -227,145 +277,94 @@ app.get('/api/history', (req, res) => {
     });
 });
 
-// --- 4.1 API LẤY DỮ LIỆU CẢM BIẾN (FULL FIX - DỮ LIỆU SẼ KHÔNG CÒN BẰNG 0) ---
 app.get('/api/sensors', (req, res) => {
     const { keyword, page = 1, date, startTime, endTime } = req.query;
     const limit = 10;
     const offset = (parseInt(page) - 1) * limit;
 
-    // 1. Tạo bảng tạm Unpivot: Dùng 'temp' làm tên cột chung để khớp với Model Flutter
-    let unpivotSql = `
-        SELECT id, 'Nhiệt độ' as sensor_type, temp as temp, created_at FROM sensor_logs
-        UNION ALL
-        SELECT id, 'Độ ẩm' as sensor_type, humid as temp, created_at FROM sensor_logs
-        UNION ALL
-        SELECT id, 'Ánh sáng' as sensor_type, light as temp, created_at FROM sensor_logs
-    `;
-
     let conditions = ["1=1"];
     let params = [];
 
-    // 2. Search Live: Tìm kiếm đa năng (Tên cảm biến, Giá trị, Thời gian)
-    if (keyword && keyword.trim() !== '') {
-        const k = keyword.trim().toLowerCase();
-        const p = `%${k}%`;
-        
-        let searchOr = [
-            "LOWER(sensor_type) LIKE ?",
-            "CAST(temp AS CHAR) LIKE ?",
-            "DATE_FORMAT(created_at, '%d/%m/%Y %H:%i:%s') LIKE ?"
-        ];
-        
-        conditions.push(`(${searchOr.join(" OR ")})`);
-        params.push(p, p, p);
-    }
-
-    // 3. Lọc theo ngày (Bộ lọc chuyên sâu)
+    // Lọc theo ngày/giờ trên bảng chuẩn
     if (date && date !== 'null' && date !== '') {
-        conditions.push("DATE(created_at) = ?");
+        conditions.push("DATE(ds.created_at) = ?");
         params.push(date);
     }
-
-    // 4. Lọc theo giờ (Bộ lọc chuyên sâu)
     if (startTime && endTime && startTime !== 'null' && endTime !== 'null') {
-        conditions.push("TIME(created_at) BETWEEN ? AND ?");
+        conditions.push("TIME(ds.created_at) BETWEEN ? AND ?");
         params.push(startTime, endTime);
+    }
+
+    // Search Live: Tìm trên Tên cảm biến (bảng DSCB) hoặc Giá trị (bảng Data_Sensors)
+    if (keyword && keyword.trim() !== '') {
+        const p = `%${keyword.trim().toLowerCase()}%`;
+        conditions.push(`(LOWER(d.Ten) LIKE ? OR CAST(ds.Value AS CHAR) LIKE ? OR DATE_FORMAT(ds.created_at, '%d/%m/%Y %H:%i:%s') LIKE ?)`);
+        params.push(p, p, p);
     }
 
     const whereClause = conditions.join(" AND ");
 
-    // --- THỰC THI TRUY VẤN ---
-    const countSql = `SELECT COUNT(*) AS total FROM (${unpivotSql}) AS unpivoted WHERE ${whereClause}`;
+    // JOIN 2 bảng để lấy Tên và Đơn vị
+    const countSql = `SELECT COUNT(*) AS total FROM Data_Sensors ds JOIN DSCB d ON ds.idSS = d.id WHERE ${whereClause}`;
 
-    db.query(countSql, params, (err, countResults) => {
-        if (err) return res.status(500).json({ error: "Lỗi Count Sensor: " + err.message });
-        
-        const totalRecords = countResults[0].total;
-        const totalPages = Math.ceil(totalRecords / limit) || 1;
+    db.query(countSql, params, (err, countRes) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const totalPages = Math.ceil(countRes[0].total / limit) || 1;
 
         const finalSql = `
-            SELECT * FROM (${unpivotSql}) AS unpivoted 
+            SELECT ds.id, d.Ten as sensor_type, ds.Value as temp, ds.created_at 
+            FROM Data_Sensors ds 
+            JOIN DSCB d ON ds.idSS = d.id 
             WHERE ${whereClause} 
-            ORDER BY created_at DESC LIMIT ? OFFSET ?`;
-        
-        // Kết hợp params lọc và params phân trang (limit, offset)
-        const finalParams = [...params, limit, offset];
+            ORDER BY ds.created_at DESC LIMIT ? OFFSET ?`;
 
-        db.query(finalSql, finalParams, (err, results) => {
-            if (err) return res.status(500).json({ error: "Lỗi Select Sensor: " + err.message });
+        db.query(finalSql, [...params, limit, offset], (err, results) => {
+            if (err) return res.status(500).json({ error: err.message });
+            // Trả về Alias 'sensor_type' và 'temp' để App Flutter không phải sửa code
             res.json({ totalPages: totalPages, data: results });
         });
     });
 });
 
-// --- 5. SOCKET.IO: XỬ LÝ ĐIỀU KHIỂN & TIMEOUT ---
+// --- 5. SOCKET.IO: ĐIỀU KHIỂN & TIMEOUT ---
 io.on('connection', (socket) => {
-    mqttClient.publish('cmd/request_update', '1');
-
-    socket.on('request_data', () => {
-        console.log("🔄 App yêu cầu cập nhật dữ liệu...");
-        mqttClient.publish('cmd/request_update', '1');
-    });
-
     socket.on('control_device', (command) => {
         const reqDevice = command.device; 
-        
         if (['light', 'temp', 'humid'].includes(reqDevice)) {
             const topic = `cmd/${reqDevice}`;
             mqttClient.publish(topic, command.action);
 
             const ackDevice = reqDevice === 'temp' ? 'fan' : reqDevice;
-
-            if (pendingCommands[ackDevice]) {
-                clearTimeout(pendingCommands[ackDevice]);
-            }
+            if (pendingCommands[ackDevice]) clearTimeout(pendingCommands[ackDevice]);
 
             pendingCommands[ackDevice] = setTimeout(() => {
-                console.log(`⚠️ TIMEOUT: Thiết bị ${ackDevice} không phản hồi!`);
-                
                 const deviceName = getDeviceName(ackDevice);
                 const actionText = command.action === '1' ? 'Bật' : 'Tắt';
                 const statusText = 'Thất bại';
                 const currentTime = new Date();
                 
-                // GHI LOG THẤT BẠI VÀO action_history
-                const sqlAction = "INSERT INTO action_history (device_name, action, status, created_at) VALUES (?, ?, ?, ?)";
-                db.query(sqlAction, [deviceName, actionText, statusText, currentTime], (err) => {
-                    if (err) console.error('❌ Lỗi lưu Timeout Action:', err.message);
-                });
+                // Ghi log thất bại song song
+                // db.query("INSERT INTO action_history (device_name, action, status, created_at) VALUES (?, ?, ?, ?)", [deviceName, actionText, statusText, currentTime]);
+                const sqlNewFail = "INSERT INTO Action (idTb, Action, Status, created_at) SELECT id, ?, ?, ? FROM tbi WHERE Ten = ?";
+                db.query(sqlNewFail, [actionText, statusText, currentTime, deviceName]);
 
-                io.emit('device_status_ack', {
-                    device: reqDevice, 
-                    status: 'FAIL',
-                    attemptAction: command.action 
-                });
-
+                io.emit('device_status_ack', { device: reqDevice, status: 'FAIL' });
                 delete pendingCommands[ackDevice];
             }, 3000);
         }
     });
-
-    socket.on('disconnect', () => {});
 });
 
-// Mở trình duyệt laptop
 app.get('/api/open-link', async (req, res) => {
     const url = req.query.url;
-    // Lệnh start trong Windows sẽ mở trình duyệt mặc định
     const start = process.platform == 'darwin' ? 'open' : process.platform == 'win32' ? 'start' : 'xdg-open';
-    
-    console.log(`🚀 Đang thực thi lệnh: ${start} ${url}`);
-    
     exec(`${start} ${url}`, (err) => {
-        if (err) {
-            console.error("Lỗi:", err);
-            res.status(500).send(err.message);
-        } else {
-            res.status(200).send("OK");
-        }
+        if (err) res.status(500).send(err.message);
+        else res.status(200).send("OK");
     });
 });
+
 const PORT = 3000;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Backend chạy tại: http://localhost:${PORT}`);
+    console.log(`🚀 Backend chuẩn hóa đang chạy tại: http://localhost:${PORT}`);
 });
