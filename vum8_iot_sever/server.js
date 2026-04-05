@@ -1,3 +1,6 @@
+let globalQueueIndex = 0;
+let queueIndex = 0;
+let isSyncing = false; // Biến đánh dấu trạng thái đang đồng bộ
 const mqtt = require('mqtt');
 const mysql = require('mysql2');
 const express = require('express');
@@ -97,81 +100,79 @@ mqttClient.on('message', (topic, message) => {
     }
     
     // B. LƯU LỊCH SỬ HÀNH ĐỘNG
+
+// B. LƯU LỊCH SỬ HÀNH ĐỘNG & XỬ LÝ TRẠNG THÁI
     if (topic.startsWith('ack/')) {
-        const device = topic.split('/')[1]; 
-        const status = msgStr; 
+        const device = topic.split('/')[1];
+        const status = msgStr;
+        const deviceName = getDeviceName(device);
         const currentTime = new Date();
-        
+
         const previousStatus = deviceStates[device];
-        deviceStates[device] = status;
-
-        let isUserAction = false; 
-        if (pendingCommands[device]) {
-            clearTimeout(pendingCommands[device]);
-            delete pendingCommands[device];
-            isUserAction = true; 
-        }
-
+        const isUserAction = !!pendingCommands[device];
         const isStateChange = previousStatus !== null && previousStatus !== status;
 
+        // CHỈ XỬ LÝ KHI CÓ SỰ THAY ĐỔI HOẶC DO NGƯỜI DÙNG BẤM
         if (isUserAction || isStateChange) {
-            const deviceName = getDeviceName(device);
-            const actionText = status === 'ON' ? 'Bật' : 'Tắt';
-            const statusText = 'Thành công';
-            const currentTime = new Date();
+            
+            // 1. CẬP NHẬT DATABASE (BẢNG TBI) - LUÔN LÀM ĐỂ APP CHUẨN
+            db.query("UPDATE tbi SET status = ? WHERE Ten = ?", [status, deviceName], (err) => {
+                if (err) return console.error('❌ Lỗi cập nhật status:', err.message);
 
-            // 1. Ghi vào bảng mới Action (Lưu lịch sử hành động)
-            const sqlNewAction = `
-                INSERT INTO Action (idTb, Action, Status, created_at)
-                SELECT id, ?, ?, ? FROM tbi WHERE Ten = ?`;
+                // 2. GỬI SOCKET LÊN APP ĐỂ CẬP NHẬT NÚT BẤM (UI)
+                io.emit('device_status_ack', { 
+                    device: (device === 'fan') ? 'temp' : device, 
+                    status: status,
+                    is_sync: isSyncing 
+                });
+                console.log(`📡 App Update: ${deviceName} -> ${status} (${isSyncing ? 'Syncing' : (isUserAction ? 'User' : 'Auto')})`);
+            });
+
+            // 3. LOGIC GHI BẢNG ACTION (LỊCH SỬ)
+            // Ghi log nếu: (Người dùng bấm) HOẶC (Trạng thái đổi tự động KHÔNG phải lúc đang Sync khởi động)
+            if (isUserAction || (isStateChange && !isSyncing)) {
+                const actionText = status === 'ON' ? 'Bật' : 'Tắt';
                 
-            db.query(sqlNewAction, [actionText, statusText, currentTime, deviceName], (err) => {
-                if (err) {
-                    console.error('❌ Lỗi lưu Action mới:', err.message);
-                } else {
-                    console.log(`💾 Đã lưu lịch sử: ${deviceName} -> ${actionText}`);
-                    
-                    // 2. CẬP NHẬT TRẠNG THÁI HIỆN TẠI VÀO BẢNG TBI
-                    // Chúng ta chỉ UPDATE khi việc ghi log lịch sử đã thành công
-                    const sqlUpdateStatus = "UPDATE tbi SET status = ? WHERE Ten = ?";
-                    db.query(sqlUpdateStatus, [status, deviceName], (errUpdate) => {
-                        if (errUpdate) {
-                            console.error(`❌ Lỗi cập nhật status cho ${deviceName}:`, errUpdate.message);
-                        } else {
-                            console.log(`✅ Đã cập nhật trạng thái '${status}' vào bảng tbi cho: ${deviceName}`);
-                        }
+                db.query("INSERT INTO Action (idTb, Action, Status, created_at) SELECT id, ?, 'Thành công', ? FROM tbi WHERE Ten = ?", 
+                [actionText, currentTime, deviceName], (err) => {
+                    if(err) console.error("❌ Lỗi ghi log Action:", err.message);
+                    else console.log(`💾 Đã ghi Log: ${deviceName} -> ${actionText} (${isUserAction ? 'Tay' : 'Auto'})`);
                 });
             }
-        });
 
-            // Cập nhật bộ nhớ tạm của Server để tránh ghi log lặp
+            // Giải phóng lệnh chờ nếu là người dùng bấm
+            if (isUserAction) {
+                clearTimeout(pendingCommands[device]);
+                delete pendingCommands[device];
+            }
+
             deviceStates[device] = status;
+        }
     }
-        
-        io.emit('device_status_ack', { 
-            device: (device === 'fan') ? 'temp' : device, 
-            status: status 
-        });
-    }
+
     // C. XỬ LÝ YÊU CẦU ĐỒNG BỘ KHI ESP32 KHỞI ĐỘNG LẠI
     if (topic === 'cmd/request_sync') {
-        console.log("🔄 ESP32 vừa khởi động, đang gửi lại trạng thái từ Database...");
+        console.log("🔄 ESP32 Reconnected: Bắt đầu đồng bộ trạng thái...");
         
-        // Truy vấn bảng tbi để lấy trạng thái cuối cùng
+        isSyncing = true; // Bật cờ đồng bộ: Ngăn ghi log rác lúc rút dây
+        
+        // Sau 4 giây thì tắt cờ đồng bộ để cho phép ghi log Auto (do cảm biến)
+        setTimeout(() => { 
+            isSyncing = false; 
+            console.log("✅ Đồng bộ hoàn tất: Đã sẵn sàng ghi log cho Auto.");
+        }, 4000); 
+
         db.query("SELECT topic, status FROM tbi", (err, results) => {
             if (err) return console.error("❌ Lỗi lấy dữ liệu đồng bộ:", err.message);
             
             results.forEach(device => {
-                // Map status 'ON' -> '1', 'OFF' -> '0'
                 const payload = (device.status === 'ON' || device.status === 'Bật') ? '1' : '0';
-                // Gửi ngược lại topic điều khiển (cmd/light, cmd/temp, cmd/humid)
                 mqttClient.publish(device.topic, payload);
-                console.log(`📤 Sync: ${device.topic} -> ${payload}`);
+                console.log(`📤 Sync gửi xuống ESP: ${device.topic} -> ${payload}`);
             });
         });
     }
-});
-
+}); // Kết thúc mqttClient.on('message')
 // --- 4. CÁC API TRUY VẤN (Tạm thời giữ nguyên để App không lỗi) ---
 app.get('/api/history', (req, res) => {
     const { device, startTime, endTime, date, statusFilter, keyword, onlyErrors, page = 1 } = req.query;
