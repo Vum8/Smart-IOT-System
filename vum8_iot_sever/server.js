@@ -246,30 +246,29 @@ app.get('/api/history', (req, res) => {
         const totalPages = totalRecords > 0 ? Math.ceil(totalRecords / limit) : 1; 
 
         // LẤY DỮ LIỆU VÀ ÉP KIỂU CHO APP FLUTTER (id, action, status, device_name...)
-        const sql = `
-            SELECT a.id, 
-                   a.Action as action, 
-                   a.Status as status, 
-                   t.Ten as device_name, 
-                   a.created_at,
-                   -1 AS temp, 
-                   (CASE 
-                        WHEN a.Action = 'Bật' AND a.Status = 'Thành công' THEN 1 
-                        WHEN a.Action = 'Tắt' AND a.Status = 'Thành công' THEN 0 
-                        WHEN a.Action = 'Bật' AND a.Status = 'Thất bại' THEN 3 
-                        WHEN a.Action = 'Tắt' AND a.Status = 'Thất bại' THEN 2 
-                        ELSE 4 
-                   END) AS humid,
-                   (CASE 
-                        WHEN t.Ten = 'Đèn chiếu sáng' THEN 1 
-                        WHEN t.Ten = 'Quạt thông gió' THEN 2 
-                        WHEN t.Ten = 'Máy tạo ẩm' THEN 3 
-                        ELSE 1
-                   END) AS light
-            FROM Action a 
-            JOIN tbi t ON a.idTb = t.id 
-            WHERE ${finalWhere} 
-            ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
+       const sql = `
+        SELECT a.id, 
+            a.Action as action, 
+            a.Status as status, 
+            t.Ten as device_name, 
+            a.created_at,
+            (CASE 
+                    WHEN a.Action = 'Bật' AND a.Status = 'Thành công' THEN 1 
+                    WHEN a.Action = 'Tắt' AND a.Status = 'Thành công' THEN 0 
+                    WHEN a.Action = 'Bật' AND a.Status = 'Thất bại' THEN 3 
+                    WHEN a.Action = 'Tắt' AND a.Status = 'Thất bại' THEN 2 
+                    ELSE 4 
+            END) AS status_code, -- Tên mới chuẩn hơn
+            (CASE 
+                    WHEN t.Ten = 'Đèn chiếu sáng' THEN 1 
+                    WHEN t.Ten = 'Quạt thông gió' THEN 2 
+                    WHEN t.Ten = 'Máy tạo ẩm' THEN 3 
+                    ELSE 1
+            END) AS device_type -- Tên mới chuẩn hơn
+        FROM Action a 
+        JOIN tbi t ON a.idTb = t.id 
+        WHERE ${finalWhere} 
+        ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
             
         db.query(sql, [...params, limit, offset], (err, results) => {
             if (err) return res.status(500).json({ error: "Lỗi Select: " + err.message });
