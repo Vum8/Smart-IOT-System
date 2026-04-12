@@ -25,64 +25,52 @@ class ActionLog {
   });
 
   factory ActionLog.fromJson(Map<String, dynamic> json, Color color) {
+    // 1. Xử lý thời gian chuẩn GMT+7
     DateTime createdAt = json['created_at'] != null
         ? DateTime.parse(json['created_at'].toString()).toLocal()
         : DateTime.now();
 
-    double tempVal = double.tryParse(json['temp'].toString()) ?? 0;
+    // 2. ĐỌC DỮ LIỆU TỪ BACKEND (Sử dụng các Key đã "dọn rác")
+    // Thay vì json['humid'], ta dùng đúng tên 'status_code'
+    int sCode = int.tryParse(json['status_code']?.toString() ?? "4") ?? 4;
 
-    if (tempVal == -1) {
-      int deviceCode = int.tryParse(json['light'].toString()) ?? 1;
-      int statusCode = int.tryParse(json['humid'].toString()) ?? -1;
+    // Thay vì json['light'], ta dùng đúng tên 'device_type'
+    int dType = int.tryParse(json['device_type']?.toString() ?? "1") ?? 1;
 
-      // --- BƯỚC 3: CHỐT CHẶN KIỂM TRA TRỰC TIẾP CHUỖI STATUS ---
-      // Lấy field 'status' từ JSON (nếu Backend có trả về kèm theo kết quả query)
-      String rawStatus = (json['status'] ?? "").toString().toLowerCase();
+    String rawStatus = (json['status'] ?? "").toString().toLowerCase();
+    String deviceNameFromDB = json['device_name'] ?? "";
 
-      String deviceName = "";
-      if (deviceCode == 1) deviceName = "Đèn chiếu sáng";
-      else if (deviceCode == 2) deviceName = "Quạt thông gió";
-      else deviceName = "Máy tạo ẩm";
+    // 3. XÁC ĐỊNH TÊN THIẾT BỊ (Ưu tiên tên từ DB join sang)
+    String displayTitle = deviceNameFromDB.isNotEmpty
+        ? deviceNameFromDB
+        : (dType == 1
+              ? "Đèn chiếu sáng"
+              : (dType == 2 ? "Quạt thông gió" : "Máy tạo ẩm"));
 
-      // Logic cũ dựa trên code humid ảo
-      bool isTurnOn = (statusCode == 1 || statusCode == 3);
+    // 4. LOGIC XÁC ĐỊNH TRẠNG THÁI (Dựa trên status_code mới)
+    // 1 & 3 là các mã dành cho hành động Bật (Thành công/Thất bại)
+    bool isTurnOn = (sCode == 1 || sCode == 3);
 
-      // LOGIC MỚI (BƯỚC 3): Kết hợp cả statusCode và chuỗi rawStatus để xác định lỗi
-      // Nếu statusCode là 2, 3 HOẶC chuỗi status chứa chữ "thất bại"/"fail"
-      bool isFail = (statusCode == 2 || statusCode == 3 || rawStatus.contains("thất bại") || rawStatus.contains("fail"));
+    // 2 & 3 là các mã dành cho Thất bại
+    bool isFail =
+        (sCode == 2 ||
+        sCode == 3 ||
+        rawStatus.contains("thất bại") ||
+        rawStatus.contains("fail"));
 
-      // Chốt chặn cuối: Nếu status rác (-1 hoặc 4) nhưng Server trả về chuỗi thất bại
-      if (statusCode == -1 || statusCode == 4) {
-        if (rawStatus.contains("thành công") || rawStatus.contains("success")) {
-          isFail = false;
-        } else {
-          isFail = true; // Mặc định nghi ngờ là lỗi nếu dữ liệu không xác định
-        }
-      }
-
-      return ActionLog(
-        date: DateFormat('dd/MM/yyyy').format(createdAt),
-        time: DateFormat('HH:mm:ss').format(createdAt),
-        type: 'device',
-        title: deviceName,
-        deviceId: 'ID: CTRL_${json['id']}',
-        actionText: 'Hành động:',
-        valueText: isTurnOn ? "Turn On" : "Turn Off",
-        primaryColor: isFail ? Colors.orange : (isTurnOn ? Colors.green : Colors.redAccent),
-        isFail: isFail,
-      );
-    } else {
-      return ActionLog(
-        date: DateFormat('dd/MM/yyyy').format(createdAt),
-        time: DateFormat('HH:mm:ss').format(createdAt),
-        type: 'sensor',
-        title: 'Dữ liệu cảm biến',
-        deviceId: 'ID: NODE_${json['id']}',
-        actionText: 'T: ${json['temp']}°C | H: ${json['humid']}%',
-        valueText: '${json['light']} Lx',
-        primaryColor: color,
-        isFail: false,
-      );
-    }
+    return ActionLog(
+      date: DateFormat('dd/MM/yyyy').format(createdAt),
+      time: DateFormat('HH:mm:ss').format(createdAt),
+      type: 'device', // Trang lịch sử giờ chỉ có thiết bị
+      title: displayTitle,
+      deviceId: 'ID: CTRL_${json['id']}',
+      actionText: 'Hành động:',
+      valueText: isTurnOn ? "Turn On" : "Turn Off",
+      // Màu sắc: Lỗi = Cam | Bật = Xanh | Tắt = Đỏ
+      primaryColor: isFail
+          ? Colors.orange
+          : (isTurnOn ? Colors.green : Colors.redAccent),
+      isFail: isFail,
+    );
   }
 }

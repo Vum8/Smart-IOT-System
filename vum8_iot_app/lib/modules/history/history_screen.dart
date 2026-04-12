@@ -28,7 +28,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   IO.Socket? _socket;
   Map<String, bool> _devicePowerStates = {
-    "Đèn chiếu sáng": false, "Quạt thông gió": false, "Máy tạo ẩm": false,
+    "Đèn chiếu sáng": false,
+    "Quạt thông gió": false,
+    "Máy tạo ẩm": false,
   };
   Map<String, String> _filterQuery = {};
 
@@ -41,10 +43,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   // --- LOGIC SOCKET (GIỮ NGUYÊN) ---
   void _initSocket() {
-    _socket = IO.io('http://10.0.2.2:3000', IO.OptionBuilder()
-        .setTransports(['websocket'])
-        .enableAutoConnect()
-        .build());
+    _socket = IO.io(
+      'http://10.0.2.2:3000',
+      IO.OptionBuilder()
+          .setTransports(['websocket'])
+          .enableAutoConnect()
+          .build(),
+    );
 
     _socket!.on('device_status_ack', (data) {
       if (mounted) {
@@ -100,7 +105,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
           if (value.isNotEmpty) {
             String apiValue = value;
             if (key == 'statusFilter') {
-              apiValue = value == 'Chỉ BẬT' ? 'on' : 'off';
+              if (value == 'Chỉ BẬT') {
+                apiValue = 'on';
+              } else if (value == 'Chỉ TẮT') {
+                apiValue = 'off';
+              } else {
+                // Nếu là 'Tất cả', ta gửi chuỗi rỗng để Backend không thêm điều kiện lọc Action
+                apiValue = '';
+              }
             }
             url += '&$key=${Uri.encodeComponent(apiValue)}';
           }
@@ -118,7 +130,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
         if (mounted) {
           setState(() {
             _totalPages = result['totalPages'] ?? 1;
-            _allLogs = data.map((item) => ActionLog.fromJson(item, AppColors.primary)).toList();
+            _allLogs = data
+                .map((item) => ActionLog.fromJson(item, AppColors.primary))
+                .toList();
           });
         }
       }
@@ -132,7 +146,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
   void _openFilter() async {
     final result = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => HistoryFilterScreen(currentFilter: _filterQuery)),
+      MaterialPageRoute(
+        builder: (context) => HistoryFilterScreen(currentFilter: _filterQuery),
+      ),
     );
     if (result != null && result is Map<String, dynamic>) {
       _filterQuery = {
@@ -166,10 +182,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [
-            Color(0xFFD6EDFF),
-            AppColors.background,
-          ],
+          colors: [Color(0xFFD6EDFF), AppColors.background],
           stops: [0.0, 0.4],
         ),
       ),
@@ -186,8 +199,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Lịch sử hoạt động',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppColors.textMain)),
+                  const Text(
+                    'Lịch sử hoạt động',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.textMain,
+                    ),
+                  ),
                   GestureDetector(
                     onTap: () {
                       _filterQuery = {};
@@ -196,13 +215,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       _fetchPage(1);
                     },
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: AppColors.primary.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: const Text('Xem tất cả',
-                          style: TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.bold)),
+                      child: const Text(
+                        'Xem tất cả',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -211,14 +239,24 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
             Expanded(
               child: _isLoading
-                  ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        color: AppColors.primary,
+                      ),
+                    )
                   : _allLogs.isEmpty
-                  ? const Center(child: Text("Không có dữ liệu lịch sử phù hợp"))
+                  ? const Center(
+                      child: Text("Không có dữ liệu lịch sử phù hợp"),
+                    )
                   : ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                itemCount: _allLogs.length,
-                itemBuilder: (context, index) => _buildLogItem(_allLogs[index]),
-              ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      itemCount: _allLogs.length,
+                      itemBuilder: (context, index) =>
+                          _buildLogItem(_allLogs[index]),
+                    ),
             ),
 
             if (!_isLoading) _buildPaginationUI(),
@@ -243,12 +281,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 borderRadius: BorderRadius.circular(15),
                 boxShadow: [
                   BoxShadow(
-                      color: AppColors.primary.withOpacity(0.08), // Shadow xanh nhẹ
-                      blurRadius: 15,
-                      offset: const Offset(0, 8)
-                  )
+                    color: AppColors.primary.withOpacity(
+                      0.08,
+                    ), // Shadow xanh nhẹ
+                    blurRadius: 15,
+                    offset: const Offset(0, 8),
+                  ),
                 ],
-                border: Border.all(color: Colors.white), // Viền trắng sang trọng
+                border: Border.all(
+                  color: Colors.white,
+                ), // Viền trắng sang trọng
               ),
               child: TextField(
                 controller: _searchController,
@@ -261,34 +303,43 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   contentPadding: const EdgeInsets.symmetric(vertical: 15),
                   suffixIcon: _searchController.text.isNotEmpty
                       ? IconButton(
-                    icon: const Icon(Icons.clear, color: Colors.grey, size: 20),
-                    onPressed: () {
-                      _searchController.clear();
-                      _onSearchChanged("");
-                    },
-                  ) : null,
+                          icon: const Icon(
+                            Icons.clear,
+                            color: Colors.grey,
+                            size: 20,
+                          ),
+                          onPressed: () {
+                            _searchController.clear();
+                            _onSearchChanged("");
+                          },
+                        )
+                      : null,
                 ),
               ),
             ),
           ),
           const SizedBox(width: 12),
           GestureDetector(
-              onTap: _openFilter,
-              child: Container(
-                  padding: const EdgeInsets.all(13),
-                  decoration: BoxDecoration(
-                      color: _filterQuery.isEmpty ? AppColors.primary : Colors.orange,
-                      borderRadius: BorderRadius.circular(15),
-                      boxShadow: [
-                        BoxShadow(
-                            color: (_filterQuery.isEmpty ? AppColors.primary : Colors.orange).withOpacity(0.3),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4)
-                        )
-                      ]
+            onTap: _openFilter,
+            child: Container(
+              padding: const EdgeInsets.all(13),
+              decoration: BoxDecoration(
+                color: _filterQuery.isEmpty ? AppColors.primary : Colors.orange,
+                borderRadius: BorderRadius.circular(15),
+                boxShadow: [
+                  BoxShadow(
+                    color:
+                        (_filterQuery.isEmpty
+                                ? AppColors.primary
+                                : Colors.orange)
+                            .withOpacity(0.3),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
                   ),
-                  child: const Icon(Icons.tune_rounded, color: Colors.white)
-              )
+                ],
+              ),
+              child: const Icon(Icons.tune_rounded, color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -308,13 +359,30 @@ class _HistoryScreenState extends State<HistoryScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Thiết bị đang chạy',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+          const Text(
+            'Thiết bị đang chạy',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.blueGrey,
+            ),
+          ),
           const SizedBox(height: 12),
           activeNames.isEmpty
-              ? Text("Tất cả thiết bị đang nghỉ ngơi 💤",
-              style: TextStyle(color: Colors.blueGrey.withOpacity(0.5), fontSize: 13))
-              : Wrap(spacing: 10, runSpacing: 10, children: activeNames.map((name) => _buildDeviceChip(name)).toList()),
+              ? Text(
+                  "Tất cả thiết bị đang nghỉ ngơi 💤",
+                  style: TextStyle(
+                    color: Colors.blueGrey.withOpacity(0.5),
+                    fontSize: 13,
+                  ),
+                )
+              : Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: activeNames
+                      .map((name) => _buildDeviceChip(name))
+                      .toList(),
+                ),
         ],
       ),
     );
@@ -324,19 +392,30 @@ class _HistoryScreenState extends State<HistoryScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.green.withOpacity(0.2)),
-          boxShadow: [
-            BoxShadow(color: Colors.green.withOpacity(0.05), blurRadius: 5, offset: const Offset(0, 2))
-          ]
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.green.withOpacity(0.2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.green.withOpacity(0.05),
+            blurRadius: 5,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           const Icon(Icons.bolt, size: 14, color: Colors.green),
           const SizedBox(width: 6),
-          Text(name, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12)),
+          Text(
+            name,
+            style: const TextStyle(
+              color: Colors.green,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
         ],
       ),
     );
@@ -372,10 +451,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
-              color: displayColor.withOpacity(0.08),
-              blurRadius: 10,
-              offset: const Offset(0, 4)
-          )
+            color: displayColor.withOpacity(0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
         ],
         border: Border.all(color: displayColor.withOpacity(0.1)),
       ),
@@ -385,27 +464,40 @@ class _HistoryScreenState extends State<HistoryScreen> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-                color: displayColor.withOpacity(0.1),
-                shape: BoxShape.circle
+              color: displayColor.withOpacity(0.1),
+              shape: BoxShape.circle,
             ),
             child: Icon(
-                isFail ? Icons.warning_amber_rounded : (isOn ? Icons.power_rounded : Icons.power_off_rounded),
-                color: displayColor,
-                size: 24
+              isFail
+                  ? Icons.warning_amber_rounded
+                  : (isOn ? Icons.power_rounded : Icons.power_off_rounded),
+              color: displayColor,
+              size: 24,
             ),
           ),
           const SizedBox(width: 15),
           Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(log.title,
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textMain)),
-                    const SizedBox(height: 4),
-                    Text("${log.date} | ${log.time}",
-                        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary))
-                  ]
-              )
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  log.title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textMain,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  "${log.date} | ${log.time}",
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -414,27 +506,31 @@ class _HistoryScreenState extends State<HistoryScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                    color: displayColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8)
+                  color: displayColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                    log.valueText.toUpperCase(),
-                    style: TextStyle(color: displayColor, fontWeight: FontWeight.w900, fontSize: 10)
+                  log.valueText.toUpperCase(),
+                  style: TextStyle(
+                    color: displayColor,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 10,
+                  ),
                 ),
               ),
               const SizedBox(height: 6),
               // DÒNG TRẠNG THÁI: Đúng tinh thần Thành công = Xanh lá
               Text(
-                  isFail ? "THẤT BẠI" : "THÀNH CÔNG",
-                  style: TextStyle(
-                      color: statusTextColor,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.5
-                  )
+                isFail ? "THẤT BẠI" : "THÀNH CÔNG",
+                style: TextStyle(
+                  color: statusTextColor,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.5,
+                ),
               ),
             ],
-          )
+          ),
         ],
       ),
     );
@@ -447,23 +543,28 @@ class _HistoryScreenState extends State<HistoryScreen> {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         // Nút quay lại kiểu mới
-        _buildArrow(Icons.arrow_back_ios_new_rounded, _currentPage > 1,
-                () => _fetchPage(_currentPage - 1)),
+        _buildArrow(
+          Icons.arrow_back_ios_new_rounded,
+          _currentPage > 1,
+          () => _fetchPage(_currentPage - 1),
+        ),
         const SizedBox(width: 12),
 
         // "Chiếc thuyền" chứa số trang bo tròn mạnh
         Container(
           padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
           decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                    color: AppColors.primary.withOpacity(0.1), // Shadow xanh thương hiệu
-                    blurRadius: 15,
-                    offset: const Offset(0, 5)
-                )
-              ]
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withOpacity(
+                  0.1,
+                ), // Shadow xanh thương hiệu
+                blurRadius: 15,
+                offset: const Offset(0, 5),
+              ),
+            ],
           ),
           child: Row(children: _buildPageNumbers()),
         ),
@@ -471,8 +572,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
         const SizedBox(width: 12),
 
         // Nút tiến lên kiểu mới
-        _buildArrow(Icons.arrow_forward_ios_rounded, _currentPage < _totalPages,
-                () => _fetchPage(_currentPage + 1)),
+        _buildArrow(
+          Icons.arrow_forward_ios_rounded,
+          _currentPage < _totalPages,
+          () => _fetchPage(_currentPage + 1),
+        ),
       ],
     );
   }
@@ -486,10 +590,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
     // Hiển thị dấu ... và trang cuối nếu tổng số trang lớn hơn 5
     if (_totalPages > 5) {
-      items.add(const Padding(
+      items.add(
+        const Padding(
           padding: EdgeInsets.symmetric(horizontal: 4),
-          child: Text("...", style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.bold))
-      ));
+          child: Text(
+            "...",
+            style: TextStyle(
+              color: AppColors.textSecondary,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      );
       items.add(_pageBtn(_totalPages));
     }
     return items;
@@ -502,25 +614,30 @@ class _HistoryScreenState extends State<HistoryScreen> {
       onTap: () => _fetchPage(p),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        width: 35, height: 35, alignment: Alignment.center,
+        width: 35,
+        height: 35,
+        alignment: Alignment.center,
         margin: const EdgeInsets.symmetric(horizontal: 2),
         decoration: BoxDecoration(
           color: active ? AppColors.primary : Colors.transparent,
           borderRadius: BorderRadius.circular(10), // Bo tròn nhẹ
-          boxShadow: active ? [
-            BoxShadow(
-                color: AppColors.primary.withOpacity(0.3),
-                blurRadius: 8,
-                offset: const Offset(0, 3)
-            )
-          ] : null,
+          boxShadow: active
+              ? [
+                  BoxShadow(
+                    color: AppColors.primary.withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : null,
         ),
-        child: Text("$p",
-            style: TextStyle(
-                color: active ? Colors.white : Colors.black,
-                fontSize: 13,
-                fontWeight: active ? FontWeight.bold : FontWeight.normal
-            )
+        child: Text(
+          "$p",
+          style: TextStyle(
+            color: active ? Colors.white : Colors.black,
+            fontSize: 13,
+            fontWeight: active ? FontWeight.bold : FontWeight.normal,
+          ),
         ),
       ),
     );
@@ -531,18 +648,25 @@ class _HistoryScreenState extends State<HistoryScreen> {
     return InkWell(
       onTap: enabled ? onTap : null,
       child: Container(
-        width: 45, height: 45,
+        width: 45,
+        height: 45,
         decoration: BoxDecoration(
           color: enabled ? Colors.white : Colors.white.withOpacity(0.5),
           borderRadius: BorderRadius.circular(15), // Bo góc 15 khớp Card
-          boxShadow: enabled ? [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.05), // Shadow rất nhẹ
-                blurRadius: 10
-            )
-          ] : null,
+          boxShadow: enabled
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05), // Shadow rất nhẹ
+                    blurRadius: 10,
+                  ),
+                ]
+              : null,
         ),
-        child: Icon(icon, size: 18, color: enabled ? AppColors.primary : Colors.grey.shade300),
+        child: Icon(
+          icon,
+          size: 18,
+          color: enabled ? AppColors.primary : Colors.grey.shade300,
+        ),
       ),
     );
   }
